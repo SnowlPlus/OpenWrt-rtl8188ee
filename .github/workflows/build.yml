@@ -83,15 +83,29 @@ jobs:
           CONFIG_TARGET_x86=y
           CONFIG_TARGET_x86_64=y
           CONFIG_TARGET_x86_64_Generic=y
+          CONFIG_PACKAGE_kmod-mac80211=y
+          CONFIG_PACKAGE_kmod-cfg80211=y
+          CONFIG_PACKAGE_kmod-lib-crc16=y
+          CONFIG_PACKAGE_kmod-libphy=y
+          CONFIG_PACKAGE_kmod-mii=y
+          CONFIG_PACKAGE_kmod-rtlwifi=y
+          CONFIG_PACKAGE_kmod-rtlwifi-pci=y
+          CONFIG_PACKAGE_kmod-rtl8188ee=y
+          CONFIG_PACKAGE_rtl8188ee-firmware=y
           EOF
           make defconfig
-          echo 'CONFIG_PACKAGE_kmod-rtl8188ee=y' >> .config
-          echo 'CONFIG_PACKAGE_rtl8188ee-firmware=y' >> .config
-          make defconfig
           echo '--- verify config ---'
-          grep -E 'CONFIG_TARGET_x86_64|CONFIG_PACKAGE_kmod-rtl8188ee|CONFIG_PACKAGE_rtl8188ee-firmware' .config
+          grep -E 'CONFIG_TARGET_x86_64|CONFIG_PACKAGE_kmod-rtl8188ee|CONFIG_PACKAGE_rtl8188ee-firmware|CONFIG_PACKAGE_kmod-rtlwifi' .config || true
+          echo '--- rtl8188ee symbols ---'
+          grep -i '8188ee' .config || true
+          echo '--- driver package Kconfig entry present? ---'
+          grep 'PACKAGE_kmod-rtl8188ee' tmp/.config-package.in || true
+          if ! grep -q 'CONFIG_PACKAGE_kmod-rtl8188ee=y' .config; then
+            echo "ERROR: kmod-rtl8188ee was deselected; dumping dependency state:"
+            grep -E 'CONFIG_PACKAGE_kmod-(rtlwifi|mac80211|cfg80211|lib-crc16|libphy|mii)|CONFIG_PCI_SUPPORT|CONFIG_RTLWIFI|CONFIG_RTL8188EE' .config || true
+            exit 1
+          fi
           grep -q 'CONFIG_TARGET_x86_64=y' .config
-          grep -q 'CONFIG_PACKAGE_kmod-rtl8188ee=y' .config
           grep -q 'CONFIG_PACKAGE_rtl8188ee-firmware=y' .config
 
       - name: Verify firmware blob is present in linux-firmware tarball
