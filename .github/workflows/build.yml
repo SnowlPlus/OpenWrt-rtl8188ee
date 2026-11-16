@@ -48,8 +48,6 @@ jobs:
               print(f"OK: patched {path}")
 
           patch('package/kernel/mac80211/realtek.mk', [
-              ('\trtl8192ce rtl8192se rtl8192de rtl8192cu',
-               '\trtl8188ee rtl8192ce rtl8192se rtl8192de rtl8192cu'),
               ('config-$(call config_package,rtl8192ce) += RTL8192CE\n',
                'config-$(call config_package,rtl8192ce) += RTL8192CE\n'
                'config-$(call config_package,rtl8188ee) += RTL8188EE\n'),
@@ -62,6 +60,12 @@ jobs:
                '  AUTOLOAD:=$(call AutoProbe,rtl8188ee)\n'
                'endef\n\n'
                'define KernelPackage/rtl8192ce\n'),
+          ])
+
+          patch('package/kernel/mac80211/Makefile', [
+              ('$(eval $(call KernelPackage,mac80211))\n',
+               '$(eval $(call KernelPackage,mac80211))\n'
+               '$(eval $(call KernelPackage,rtl8188ee))\n'),
           ])
 
           patch('package/firmware/linux-firmware/realtek.mk', [
@@ -100,9 +104,14 @@ jobs:
           grep -i '8188ee' .config || true
           echo '--- driver package Kconfig entry present? ---'
           grep 'PACKAGE_kmod-rtl8188ee' tmp/.config-package.in || true
+          echo '--- all rtl8188ee package definitions in makefiles ---'
+          grep -rn 'rtl8188ee' package/kernel/mac80211/realtek.mk package/kernel/mac80211/Makefile || true
           if ! grep -q 'CONFIG_PACKAGE_kmod-rtl8188ee=y' .config; then
-            echo "ERROR: kmod-rtl8188ee was deselected; dumping dependency state:"
+            echo "ERROR: kmod-rtl8188ee missing from final config"
+            echo "--- dependency-related symbols ---"
             grep -E 'CONFIG_PACKAGE_kmod-(rtlwifi|mac80211|cfg80211|lib-crc16|libphy|mii)|CONFIG_PCI_SUPPORT|CONFIG_RTLWIFI|CONFIG_RTL8188EE' .config || true
+            echo "--- rtl8188ee area in generated package Kconfig ---"
+            grep -n -i -A8 -B2 'rtl8188ee' tmp/.config-package.in || true
             exit 1
           fi
           grep -q 'CONFIG_TARGET_x86_64=y' .config
