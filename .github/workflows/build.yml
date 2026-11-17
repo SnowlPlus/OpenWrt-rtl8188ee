@@ -31,7 +31,11 @@ jobs:
           wget -q "https://mirrors.cloud.tencent.com/openwrt/releases/24.10.6/targets/x86/64/$SDK" \
             -O "$SDK"
           tar --zstd -xf "$SDK"
-          mv openwrt-sdk-* sdk
+          rm -f "$SDK"
+          SDKDIR=$(find . -maxdepth 1 -type d -name 'openwrt-sdk-*' | head -1)
+          echo "=== SDKDIR=$SDKDIR ==="
+          if [ -z "$SDKDIR" ]; then echo "ERROR: SDK directory not found after extract"; exit 1; fi
+          mv "$SDKDIR" sdk
           cd sdk
           echo "--- SDK kernel build tree ---"
           find build_dir -path '*linux-6.6.127/.config' -o -path '*linux-6.6.127/Module.symvers'
