@@ -42,28 +42,26 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Fetch mac80211 package definition from v24.10.6
-        run: |
-          cd $GITHUB_WORKSPACE
-          # SDK ships the compiled kernel but not the mac80211 package source.
-          # Pull just that directory from the matching release tag.
-          git clone --depth 1 --branch v24.10.6 --filter=blob:none --no-checkout \
-            https://github.com/openwrt/openwrt.git owrt-src
-          cd owrt-src
-          git sparse-checkout init --cone
-          git sparse-checkout set package/kernel/mac80211
-          git checkout
-          cd ..
-          cp -a owrt-src/package/kernel/mac80211 sdk/package/kernel/mac80211
-          echo "--- mac80211 files ---"
-          ls sdk/package/kernel/mac80211/ | head
-
       - name: Add RTL8188EE driver definition
         run: |
           cd $GITHUB_WORKSPACE/sdk
-          python3 - << 'PY'
+          # SDK only scans packages wired in via feeds (package/Makefile hardcodes
+          # package-y += kernel/linux). feeds install -a already linked the base
+          # feed's mac80211 into package/feeds/base/mac80211 -- patch THAT in place.
+          MAC80211_DIR=$(find package/feeds -name mac80211 | head -1)
+          echo "=== MAC80211_DIR=$MAC80211_DIR ==="
+          if [ -z "$MAC80211_DIR" ]; then
+            echo "ERROR: mac80211 not found under package/feeds"
+            find package/feeds -maxdepth 3 -iname '*mac80211*' || true
+            exit 1
+          fi
+          echo "$MAC80211_DIR" > $GITHUB_WORKSPACE/mac80211_dir.txt
+          ls "$MAC80211_DIR"/ | head
+          python3 - "$MAC80211_DIR" << 'PY'
           from pathlib import Path
           import sys
+
+          mac = sys.argv[1]
 
           def patch(path, replacements):
               p = Path(path)
@@ -76,7 +74,7 @@ jobs:
               p.write_text(s)
               print(f"OK: patched {path}")
 
-          patch('package/kernel/mac80211/realtek.mk', [
+          patch(f'{mac}/realtek.mk', [
               ('config-$(call config_package,rtl8192ce) += RTL8192CE\n',
                'config-$(call config_package,rtl8192ce) += RTL8192CE\n'
                'config-$(call config_package,rtl8188ee) += RTL8188EE\n'),
@@ -91,15 +89,15 @@ jobs:
                'define KernelPackage/rtl8192ce\n'),
           ])
 
-          patch('package/kernel/mac80211/Makefile', [
+          patch(f'{mac}/Makefile', [
               ('$(eval $(call KernelPackage,mac80211))\n',
                '$(eval $(call KernelPackage,mac80211))\n'
                '$(eval $(call KernelPackage,rtl8188ee))\n'),
           ])
 
-          # Pin vermagic to official 24.10.6 x86/64 value for opkg dependency.
-          # The SDK already compiles against official kernel headers, so the
-          # struct-module ABI matches; this only aligns the Depends string.
+          # Align the opkg Depends string with the official firmware's kernel.
+          # The SDK compiles against the official prebuilt kernel headers, so the
+          # struct-module ABI already matches; this only pins the vermagic string.
           Path('vermagic').write_text('50daf8372d971124fb3519e8d87e02ae\n')
           patch('include/kernel-defaults.mk', [
               ("\tgrep '=[ym]' $(LINUX_DIR)/.config.set | LC_ALL=C sort | $(MKHASH) md5 > $(LINUX_DIR)/.vermagic\n",
@@ -118,20 +116,33 @@ jobs:
           grep -E 'CONFIG_PACKAGE_kmod-rtl8188ee' .config || true
           if ! grep -q 'CONFIG_PACKAGE_kmod-rtl8188ee=y' .config; then
             echo 'ERROR: kmod-rtl8188ee missing from final config'
+            echo '--- rtl8188ee in .config-package.in ---'
             grep -n -i -A8 -B2 'rtl8188ee' tmp/.config-package.in || true
+            echo '--- control: rtl8192ce symbol (should exist if mac80211 is scanned) ---'
+            grep -n 'PACKAGE_kmod-rtl8192ce' tmp/.config-package.in || true
             exit 1
           fi
+          echo '--- rtl8188ee symbol confirmed in .config-package.in ---'
+          grep -n 'PACKAGE_kmod-rtl8188ee' tmp/.config-package.in
+          echo '--- injected vermagic ---'
+          cat vermagic
 
       - name: Build driver with SDK
         run: |
           cd $GITHUB_WORKSPACE/sdk
-          make -j$(nproc) package/kernel/mac80211/compile
+          MAC80211_DIR=$(cat $GITHUB_WORKSPACE/mac80211_dir.txt)
+          echo "=== build target: $MAC80211_DIR/compile ==="
+          make -j$(nproc) "$MAC80211_DIR/compile"
 
       - name: Verify and collect
         run: |
           cd $GITHUB_WORKSPACE/sdk
           IPK=$(find . -name 'kmod-rtl8188ee*.ipk' | head -1)
-          if [ -z "$IPK" ]; then echo "ERROR: kmod ipk not produced"; exit 1; fi
+          if [ -z "$IPK" ]; then
+            echo "ERROR: kmod ipk not produced"
+            find . -name '*rtl8188ee*' | head -30
+            exit 1
+          fi
           echo "=== built ipk: $IPK ==="
           python3 - "$IPK" << 'PY'
           import sys, io, gzip, tarfile
