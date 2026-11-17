@@ -80,22 +80,24 @@ jobs:
                'endef\n'
                '$(eval $(call BuildPackage,rtl8188ee-firmware))\n'),
           ])
+
+          # Pin the kernel vermagic to the official 24.10.6 x86/64 value so the
+          # built kmod's kernel dependency exactly matches the device firmware.
+          # Official kmods live under .../kmods/6.6.127-1-50daf8372d971124fb3519e8d87e02ae
+          Path('vermagic').write_text('1-50daf8372d971124fb3519e8d87e02ae\n')
+          patch('include/kernel-defaults.mk', [
+              ("\tgrep '=[ym]' $(LINUX_DIR)/.config.set | LC_ALL=C sort | $(MKHASH) md5 > $(LINUX_DIR)/.vermagic\n",
+               "\tcp $(TOPDIR)/vermagic $(LINUX_DIR)/.vermagic\n"),
+          ])
           PY
 
       - name: Configure build
         run: |
           cd openwrt
-          # Use the official 24.10.6 x86/64 build config as the base, so the
-          # kernel .config (and thus the vermagic ABI hash) matches the device.
-          # This is what makes the resulting kmod installable with opkg.
-          curl -fsSL -o .config \
-            https://downloads.openwrt.org/releases/24.10.6/targets/x86/64/config.buildinfo
-          # Avoid building every kmod/package (does not affect kernel vermagic)
-          sed -i 's/^CONFIG_ALL_KMODS=y/# CONFIG_ALL_KMODS is not set/' .config
-          sed -i 's/^CONFIG_ALL_NONSHARED=y/# CONFIG_ALL_NONSHARED is not set/' .config
-          sed -i 's/^CONFIG_ALL=y/# CONFIG_ALL is not set/' .config
-          # Add only the packages we need
-          cat >> .config << 'EOF'
+          cat > .config << 'EOF'
+          CONFIG_TARGET_x86=y
+          CONFIG_TARGET_x86_64=y
+          CONFIG_TARGET_x86_64_Generic=y
           CONFIG_PACKAGE_kmod-rtl8188ee=y
           CONFIG_PACKAGE_rtl8188ee-firmware=y
           EOF
@@ -108,6 +110,8 @@ jobs:
             exit 1
           fi
           grep -q 'CONFIG_PACKAGE_rtl8188ee-firmware=y' .config
+          echo '--- injected vermagic ---'
+          cat vermagic
 
       - name: Verify firmware blob is present in linux-firmware tarball
         run: |
@@ -125,7 +129,7 @@ jobs:
       - name: Verify kmod kernel ABI matches device
         run: |
           cd openwrt
-          EXPECTED='1-50daf8372971124fb3519e8d87e02a'
+          EXPECTED='1-50daf8372d971124fb3519e8d87e02ae'
           echo "=== expected vermagic (from device kernel): $EXPECTED ==="
           VERMAGIC=$(find build_dir -name .vermagic -path '*linux-6.6*' | head -1 | xargs cat 2>/dev/null || true)
           echo "=== built kernel .vermagic: $VERMAGIC ==="
