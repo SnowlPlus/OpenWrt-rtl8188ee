@@ -24,6 +24,8 @@ jobs:
 
       - name: Clone OpenWrt v24.10.6 and update feeds
         run: |
+          # The device kernel vermagic matches the official 24.10.6 release,
+          # so use the release tag together with its official config.buildinfo.
           git clone -b v24.10.6 --depth 1 https://github.com/openwrt/openwrt.git openwrt
           cd openwrt
           ./scripts/feeds update -a
@@ -83,38 +85,28 @@ jobs:
       - name: Configure build
         run: |
           cd openwrt
-          cat > .config << 'EOF'
-          CONFIG_TARGET_x86=y
-          CONFIG_TARGET_x86_64=y
-          CONFIG_TARGET_x86_64_Generic=y
-          CONFIG_PACKAGE_kmod-mac80211=y
-          CONFIG_PACKAGE_kmod-cfg80211=y
-          CONFIG_PACKAGE_kmod-lib-crc16=y
-          CONFIG_PACKAGE_kmod-libphy=y
-          CONFIG_PACKAGE_kmod-mii=y
-          CONFIG_PACKAGE_kmod-rtlwifi=y
-          CONFIG_PACKAGE_kmod-rtlwifi-pci=y
+          # Use the official 24.10.6 x86/64 build config as the base, so the
+          # kernel .config (and thus the vermagic ABI hash) matches the device.
+          # This is what makes the resulting kmod installable with opkg.
+          curl -fsSL -o .config \
+            https://downloads.openwrt.org/releases/24.10.6/targets/x86/64/config.buildinfo
+          # Avoid building every kmod/package (does not affect kernel vermagic)
+          sed -i 's/^CONFIG_ALL_KMODS=y/# CONFIG_ALL_KMODS is not set/' .config
+          sed -i 's/^CONFIG_ALL_NONSHARED=y/# CONFIG_ALL_NONSHARED is not set/' .config
+          sed -i 's/^CONFIG_ALL=y/# CONFIG_ALL is not set/' .config
+          # Add only the packages we need
+          cat >> .config << 'EOF'
           CONFIG_PACKAGE_kmod-rtl8188ee=y
           CONFIG_PACKAGE_rtl8188ee-firmware=y
           EOF
           make defconfig
           echo '--- verify config ---'
-          grep -E 'CONFIG_TARGET_x86_64|CONFIG_PACKAGE_kmod-rtl8188ee|CONFIG_PACKAGE_rtl8188ee-firmware|CONFIG_PACKAGE_kmod-rtlwifi' .config || true
-          echo '--- rtl8188ee symbols ---'
-          grep -i '8188ee' .config || true
-          echo '--- driver package Kconfig entry present? ---'
-          grep 'PACKAGE_kmod-rtl8188ee' tmp/.config-package.in || true
-          echo '--- all rtl8188ee package definitions in makefiles ---'
-          grep -rn 'rtl8188ee' package/kernel/mac80211/realtek.mk package/kernel/mac80211/Makefile || true
+          grep -E 'CONFIG_TARGET_x86_64|CONFIG_PACKAGE_kmod-rtl8188ee|CONFIG_PACKAGE_rtl8188ee-firmware' .config || true
           if ! grep -q 'CONFIG_PACKAGE_kmod-rtl8188ee=y' .config; then
-            echo "ERROR: kmod-rtl8188ee missing from final config"
-            echo "--- dependency-related symbols ---"
-            grep -E 'CONFIG_PACKAGE_kmod-(rtlwifi|mac80211|cfg80211|lib-crc16|libphy|mii)|CONFIG_PCI_SUPPORT|CONFIG_RTLWIFI|CONFIG_RTL8188EE' .config || true
-            echo "--- rtl8188ee area in generated package Kconfig ---"
+            echo 'ERROR: kmod-rtl8188ee missing from final config'
             grep -n -i -A8 -B2 'rtl8188ee' tmp/.config-package.in || true
             exit 1
           fi
-          grep -q 'CONFIG_TARGET_x86_64=y' .config
           grep -q 'CONFIG_PACKAGE_rtl8188ee-firmware=y' .config
 
       - name: Verify firmware blob is present in linux-firmware tarball
@@ -129,6 +121,27 @@ jobs:
         run: |
           cd openwrt
           make -j$(nproc)
+
+      - name: Verify kmod kernel ABI matches device
+        run: |
+          cd openwrt
+          EXPECTED='1-50daf8372971124fb3519e8d87e02a'
+          echo "=== expected vermagic (from device kernel): $EXPECTED ==="
+          VERMAGIC=$(find build_dir -name .vermagic -path '*linux-6.6*' | head -1 | xargs cat 2>/dev/null || true)
+          echo "=== built kernel .vermagic: $VERMAGIC ==="
+          echo "=== built kmod files ==="
+          ls bin/targets/x86/64/packages/kmod-rtl8188ee*.ipk
+          IPK=$(ls bin/targets/x86/64/packages/kmod-rtl8188ee*.ipk | head -1)
+          DEPS=$(unzip -p "$IPK" 2>/dev/null | tar -xOz ./control 2>/dev/null | grep -i '^Depends:' || true)
+          [ -z "$DEPS" ] && DEPS=$(ar p "$IPK" control.tar.gz 2>/dev/null | tar -xOz ./control 2>/dev/null | grep -i '^Depends:' || true)
+          echo "=== kmod Depends: $DEPS ==="
+          if echo "$DEPS$VERMAGIC" | grep -q "$EXPECTED"; then
+            echo "OK: kernel ABI hash matches device -- kmod will install"
+          else
+            echo "ERROR: kernel ABI hash does NOT match device. The .config did not reproduce the official release kernel."
+            echo "Do NOT download these artifacts. Share this log."
+            exit 1
+          fi
 
       - name: Collect packages
         run: |
