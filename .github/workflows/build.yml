@@ -192,5 +192,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openwrt-24.10.6-rtl8188ee-sdk
-          path: artifacts/
+          path: sdk/artifacts/kmod-rtl8188ee*.ipk
           if-no-files-found: error
