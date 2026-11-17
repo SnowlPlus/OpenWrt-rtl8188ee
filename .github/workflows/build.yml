@@ -138,6 +138,8 @@ jobs:
           VERMAGIC=$(find build_dir -name .vermagic -path '*linux-6.6*' | head -1 | xargs cat 2>/dev/null || true)
           echo "$VERMAGIC"
           echo "=== kmod files ==="
+          ls bin/targets/x86/64/packages/kmod-*.ipk
+          echo "=== rtl8188ee artifacts ==="
           ls bin/targets/x86/64/packages/kmod-rtl8188ee*.ipk
           IPK=$(ls bin/targets/x86/64/packages/kmod-rtl8188ee*.ipk | head -1)
           python3 - "$IPK" << 'PY'
@@ -196,12 +198,10 @@ jobs:
       - name: Collect packages
         run: |
           mkdir -p artifacts
-          cp openwrt/bin/targets/x86/64/packages/kmod-rtl8188ee*.ipk artifacts/ 2>/dev/null || true
-          cp openwrt/bin/targets/x86/64/packages/rtl8188ee-firmware*.ipk artifacts/ 2>/dev/null || true
-          cp openwrt/bin/targets/x86/64/packages/kmod-rtlwifi*.ipk artifacts/ 2>/dev/null || true
-          cp openwrt/bin/targets/x86/64/packages/kmod-mac80211*.ipk artifacts/ 2>/dev/null || true
-          cp openwrt/bin/targets/x86/64/packages/kmod-cfg80211*.ipk artifacts/ 2>/dev/null || true
-          echo '--- artifacts ---'
+          for p in kmod-rtl8188ee rtl8188ee-firmware kmod-rtlwifi kmod-rtlwifi-pci kmod-mac80211 kmod-cfg80211; do
+            cp openwrt/bin/targets/x86/64/packages/${p}_*.ipk artifacts/ 2>/dev/null || true
+          done
+          echo '--- collected artifacts ---'
           ls -lh artifacts/
 
       - name: Upload artifacts
